@@ -1,0 +1,15 @@
+# P0 is for data integrity and smoke checks; it does NOT train a model.
+project: fed-finelabel-budget
+seed: 20261011
+n_clients: 10
+partition:
+  type: dirichlet_coarse  # iid | dirichlet_coarse
+  alpha: 0.3
+  min_client_samples: 2
+  max_attempts: 1000
+budget:
+  initial_fraction: 0.02
+  additional_fractions: [0.02, 0.04]
+dataset:
+  root: data/cifar100
+  hierarchy: cifar100_official_20x5

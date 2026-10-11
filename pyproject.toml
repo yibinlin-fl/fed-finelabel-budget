@@ -1,0 +1,29 @@
+[build-system]
+requires = ["setuptools>=65", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "fed-finelabel-budget"
+version = "0.1.0"
+description = "Reproducible P0 scaffold for budgeted federated fine-label acquisition"
+readme = "README.md"
+requires-python = ">=3.10"
+authors = [{name = "Research project"}]
+dependencies = [
+  "numpy>=1.23,<3",
+  "PyYAML>=6.0,<7",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=7.4,<10"]
+train = ["torch>=2.1", "torchvision>=0.16", "pandas>=2.0"]
+
+[project.scripts]
+fed-finelabel = "fed_finelabel_budget.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-ra"

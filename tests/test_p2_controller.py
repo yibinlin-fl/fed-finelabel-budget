@@ -67,6 +67,11 @@ def test_round_checkpoint_resume_matches_uninterrupted(experiment, tmp_path):
     b = torch.load(tmp_path / "resume/checkpoint.pt", weights_only=True)
     assert a["purchased"] == b["purchased"]
     assert all(torch.equal(v, b["model"][k]) for k, v in a["model"].items())
+    # A completed run can be recovered to a new output folder without retraining.
+    finished = run_baseline(cfg, simulation, parts, "B2", tmp_path / "completed-recovery",
+                            resume=tmp_path / "full/checkpoint.pt", model_factory=TinyNet)
+    assert finished["stages"] == uninterrupted["stages"] and finished["checkpoint_verified"]
+    assert (tmp_path / "completed-recovery/rounds.jsonl").exists()
     altered = deepcopy(cfg)
     altered["seeds"]["training"] += 1
     with pytest.raises(ValueError, match="protocol"):

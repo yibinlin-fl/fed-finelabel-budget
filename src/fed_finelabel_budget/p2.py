@@ -121,6 +121,8 @@ def run_baseline(cfg, simulation, parts, strategy, output, *, resume=None, stop_
     output = Path(output)
     output.mkdir(parents=True, exist_ok=True)
     checkpoint = output / "checkpoint.pt"
+    if resume is not None:
+        _save_checkpoint(checkpoint, saved)
     invocation_rounds = 0
     for stage, target in enumerate(targets):
         stage_end = (stage + 1) * t["rounds_per_stage"]
@@ -183,12 +185,15 @@ def run_baseline(cfg, simulation, parts, strategy, output, *, resume=None, stop_
                 return {"status": "PAUSED_AT_ROUND_BOUNDARY", "checkpoint": str(checkpoint), "rounds": rounds}
     restored = torch.load(checkpoint, map_location="cpu", weights_only=True)
     checkpoint_ok = all(torch.equal(v.detach().cpu(), restored["model"][k]) for k, v in model.state_dict().items())
+    if not checkpoint_ok:
+        raise AssertionError("checkpoint roundtrip mismatch")
     test_metrics = simulation.test.evaluate(model, cfg["device"], cfg["evaluation_batch_size"]) if simulation.test else None
     result = {"status": "PASS", "strategy": strategy, "initial_ids": initial,
               "targets": targets, "stages": stages, "rounds": rounds, "ledger": ledger,
               "checkpoint_verified": checkpoint_ok, "test_final_only": test_metrics,
               "protocol_hash": protocol_hash}
     (output / "summary.json").write_text(json.dumps(result, indent=2), encoding="utf-8")
+    (output / "rounds.jsonl").write_text("".join(json.dumps(r) + "\n" for r in rounds), encoding="utf-8")
     return result
 
 

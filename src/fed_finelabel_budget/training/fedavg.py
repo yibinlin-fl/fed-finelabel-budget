@@ -22,13 +22,15 @@ def aggregate_states(states, counts):
 
 def train_fedavg(model, clients, criterion, *, rounds, clients_per_round, local_epochs,
                  batch_size, learning_rate, max_steps, sampling_seed, training_seed,
-                 device="cpu", start_round=0, fixed_steps=False, aggregation_counts=None):
+                 device="cpu", start_round=0, fixed_steps=False, aggregation_counts=None, momentum=0.0):
     if not clients or not 1 <= clients_per_round <= len(clients):
         raise ValueError("invalid participating client count")
     if min(rounds, local_epochs, batch_size, max_steps) < 1 or learning_rate <= 0:
         raise ValueError("training limits and learning rate must be positive")
     if any(len(ds) == 0 for ds in clients.values()):
         raise ValueError("empty clients must be excluded explicitly")
+    if not np.isfinite(momentum) or not 0 <= momentum < 1:
+        raise ValueError("momentum must be finite in [0,1)")
     model.to(device)
     criterion.to(device)
     rng = np.random.default_rng(sampling_seed)
@@ -42,7 +44,7 @@ def train_fedavg(model, clients, criterion, *, rounds, clients_per_round, local_
             seed = training_seed + round_index * 1000003 + cid
             seed_everything(seed)
             local = deepcopy(model).to(device).train()
-            optimizer = torch.optim.SGD(local.parameters(), lr=learning_rate)
+            optimizer = torch.optim.SGD(local.parameters(), lr=learning_rate, momentum=momentum)
             generator = torch.Generator().manual_seed(seed)
             if fixed_steps:
                 # Equal gradient/batch budgets including small fine-only datasets.

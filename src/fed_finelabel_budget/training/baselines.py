@@ -11,11 +11,11 @@ class FineOnlyLoss(nn.Module):
         return F.cross_entropy(logits, fine)
 
 
-def build_clients(strategy, pool, partitions, purchased, hierarchy):
+def build_clients(strategy, pool, partitions, purchased, hierarchy, *, loss_config=None):
     if strategy not in ("B0", "B1", "B2", "B3", "B4"):
         raise ValueError("unknown baseline")
     clients = {}
     for cid, ids in partitions.items():
         selected = [int(i) for i in ids if int(i) in purchased] if strategy == "B0" else ids
         clients[cid] = ClientDataset(pool, selected, purchased, hierarchy)
-    return clients, FineOnlyLoss() if strategy == "B0" else MixedSupervisionLoss(hierarchy)
+    return clients, FineOnlyLoss() if strategy == "B0" else MixedSupervisionLoss(hierarchy, **(loss_config or {}))

@@ -1,0 +1,34 @@
+device: cuda
+threads: 2
+dataset_root: data/cifar100
+p2_artifacts: results/p2_cpu_pilot
+output: results/p25_diagnostic
+split_seed: 20261011
+init_seed: 102
+partition_seed: 101
+sampling_seed: 103
+training_seed: 105
+validation_samples: 500
+overfit:
+  samples: 128
+  iterations: 100
+  batch_size: 32
+  optimizer: adam
+  learning_rate: 0.001
+  momentum: 0.0
+  target_accuracy: 0.95
+central:
+  samples: 1024
+  iterations: 30
+  batch_size: 32
+  optimizer: sgd
+  learning_rate: 0.05
+  momentum: 0.9
+fedavg:
+  samples: 512
+  iterations: 30
+  clients: 4
+  max_steps: 8
+  batch_size: 16
+  learning_rate: 0.02
+  momentum: 0.9

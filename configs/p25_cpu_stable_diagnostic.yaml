@@ -1,0 +1,35 @@
+# Lower-LR control after observed early validation CE >500; no official test access.
+device: cpu
+threads: 2
+dataset_root: data/cifar100
+p2_artifacts: results/p2_cpu_pilot
+output: results/p25_cpu_stable_diagnostic
+split_seed: 20261011
+init_seed: 102
+partition_seed: 101
+sampling_seed: 103
+training_seed: 105
+validation_samples: 500
+overfit:
+  samples: 128
+  iterations: 40
+  batch_size: 16
+  optimizer: adam
+  learning_rate: 0.001
+  momentum: 0.0
+  target_accuracy: 0.95
+central:
+  samples: 256
+  iterations: 10
+  batch_size: 16
+  optimizer: sgd
+  learning_rate: 0.02
+  momentum: 0.9
+fedavg:
+  samples: 128
+  iterations: 10
+  clients: 2
+  max_steps: 4
+  batch_size: 16
+  learning_rate: 0.02
+  momentum: 0.9

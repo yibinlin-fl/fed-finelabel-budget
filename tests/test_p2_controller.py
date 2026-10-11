@@ -124,3 +124,24 @@ def test_hidden_truth_changes_do_not_affect_query_inputs(experiment):
         a = query_increment(strategy, data.pool, parts, oracle_a.purchased_labels(), **kwargs)
         b = query_increment(strategy, data.pool, parts, oracle_b.purchased_labels(), **kwargs)
         assert a == b and not set(a) & set(initial)
+
+
+def test_diagnostic_checkpoint_cannot_initialize_baseline(experiment, tmp_path):
+    cfg, simulation, parts = experiment
+    path = tmp_path / "diagnostic.pt"
+    torch.save({"purpose": "diagnostic_full_fine", "model": TinyNet().state_dict()}, path)
+    with pytest.raises(ValueError, match="diagnostic weights"):
+        run_baseline(cfg, simulation, parts, "B0", tmp_path / "baseline", resume=path, model_factory=TinyNet)
+
+
+def test_explicit_momentum_and_loss_resume(experiment, tmp_path):
+    cfg, simulation, parts = experiment
+    cfg["training"]["momentum"] = .9
+    cfg["loss"] = {"aggregation":"group_mean", "fine_weight":1., "coarse_weight":.5}
+    full = run_baseline(cfg, simulation, parts, "B1", tmp_path / "full", model_factory=TinyNet)
+    stopped = run_baseline(cfg, simulation, parts, "B1", tmp_path / "part", stop_after_rounds=1, model_factory=TinyNet)
+    resumed = run_baseline(cfg, simulation, parts, "B1", tmp_path / "part", resume=stopped["checkpoint"], model_factory=TinyNet)
+    assert full["stages"] == resumed["stages"]
+    a = torch.load(tmp_path / "full/checkpoint.pt", weights_only=True)
+    b = torch.load(tmp_path / "part/checkpoint.pt", weights_only=True)
+    assert all(torch.equal(v, b["model"][k]) for k,v in a["model"].items())

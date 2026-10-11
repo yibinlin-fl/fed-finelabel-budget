@@ -4,6 +4,7 @@ __pycache__/
 *.egg-info/
 .venv/
 .venv-p1/
+.venv-p25/
 .uv-cache/
 .tmp/
 venv/
@@ -18,6 +19,8 @@ venv/
 !/reports/.gitkeep
 !/reports/P1_REPORT.md
 !/reports/P2_REPORT.md
+!/reports/P2_5_REPORT.md
+!/reports/P2_5_CURVES.png
 *.pt
 *.pth
 *.ckpt

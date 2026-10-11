@@ -6,8 +6,14 @@ from ..data.hierarchy import Cifar100Hierarchy
 
 
 class MixedSupervisionLoss(nn.Module):
-    def __init__(self, hierarchy: Cifar100Hierarchy):
+    def __init__(self, hierarchy: Cifar100Hierarchy, *, aggregation="sample_mean", fine_weight=1.0, coarse_weight=1.0):
         super().__init__()
+        import math
+        if aggregation not in ("sample_mean", "group_mean"):
+            raise ValueError("invalid loss aggregation")
+        if any(not math.isfinite(w) or w < 0 for w in (fine_weight, coarse_weight)) or fine_weight + coarse_weight == 0:
+            raise ValueError("invalid loss weights")
+        self.aggregation, self.fine_weight, self.coarse_weight = aggregation, fine_weight, coarse_weight
         groups = hierarchy.coarse_to_fine
         if len(groups) != 20 or any(len(g) != 5 for g in groups):
             raise ValueError("require 20 groups of 5 fine classes")
@@ -40,4 +46,13 @@ class MixedSupervisionLoss(nn.Module):
             return losses
         if reduction != "mean":
             raise ValueError("reduction must be mean or none")
-        return losses.mean()
+        if self.aggregation == "sample_mean":
+            return (losses * torch.where(known, self.fine_weight, self.coarse_weight)).mean()
+        # Sum of weighted group means; absent groups contribute zero. No
+        # double supervision and no implicit renormalization of the weights.
+        result = logits.sum() * 0
+        if known.any():
+            result = result + self.fine_weight * losses[known].mean()
+        if unknown.any():
+            result = result + self.coarse_weight * losses[unknown].mean()
+        return result

@@ -35,6 +35,8 @@ def validate_config(cfg):
         raise ValueError("fixed-step protocol requires local_epochs=1 and positive limits")
     if not np.isfinite(t["learning_rate"]) or t["learning_rate"] <= 0:
         raise ValueError("invalid learning rate")
+    if not np.isfinite(t.get("momentum", 0.0)) or not 0 <= t.get("momentum", 0.0) < 1:
+        raise ValueError("invalid momentum")
     if cfg["device"] not in ("cpu", "cuda") or not 1 <= cfg["threads"] <= 8:
         raise ValueError("invalid device/threads")
     if cfg["device"] == "cuda" and not torch.cuda.is_available():
@@ -105,6 +107,8 @@ def run_baseline(cfg, simulation, parts, strategy, output, *, resume=None, stop_
     next_round = 0
     if resume is not None:
         saved = torch.load(resume, map_location="cpu", weights_only=True)
+        if saved.get("purpose") == "diagnostic_full_fine":
+            raise ValueError("diagnostic weights cannot initialize baselines")
         if saved["protocol_hash"] != protocol_hash or saved["strategy"] != strategy:
             raise ValueError("resume protocol/strategy mismatch")
         if saved["initial_ids"] != initial:
@@ -141,7 +145,8 @@ def run_baseline(cfg, simulation, parts, strategy, output, *, resume=None, stop_
                            "query_seconds": query_time})
         if oracle.spent != target:
             raise ValueError("checkpoint budget exceeds current stage")
-        clients, criterion = build_clients(strategy, pool, parts, oracle.purchased_labels(), hierarchy)
+        clients, criterion = build_clients(strategy, pool, parts, oracle.purchased_labels(), hierarchy,
+                                           loss_config=cfg.get("loss"))
         if any(not len(ds) for ds in clients.values()):
             raise ValueError("fine-only client has no labels: choose feasible public min_client_samples >=50")
         for round_index in range(next_round, stage_end):
@@ -151,14 +156,16 @@ def run_baseline(cfg, simulation, parts, strategy, output, *, resume=None, stop_
                 clients_per_round=t["clients_per_round"], local_epochs=1, batch_size=t["batch_size"],
                 learning_rate=t["learning_rate"], max_steps=t["max_steps"],
                 sampling_seed=seeds["client_sampling"], training_seed=seeds["training"],
-                device=cfg["device"], fixed_steps=True, aggregation_counts={cid: len(ids) for cid, ids in parts.items()})[0]
+                device=cfg["device"], fixed_steps=True, aggregation_counts={cid: len(ids) for cid, ids in parts.items()},
+                momentum=t.get("momentum", 0.0))[0]
             if cfg["device"] == "cuda":
                 torch.cuda.synchronize()
             train_time = time.perf_counter() - start
             changed = sum(not torch.equal(before[k], v.detach().cpu()) for k, v in model.named_parameters())
             if changed == 0 or any(not torch.isfinite(v).all() for v in model.state_dict().values() if v.is_floating_point()):
                 raise RuntimeError("model did not update or has nonfinite state")
-            validation = simulation.validation.evaluate(model, cfg["device"], cfg["evaluation_batch_size"])
+            validation = simulation.validation.evaluate(model, cfg["device"], cfg["evaluation_batch_size"],
+                                                        diagnostics=cfg.get("evaluation_diagnostics", False))
             examples = sum(c["examples_seen"] for c in history["clients"])
             history.update({"strategy": strategy, "stage": stage, "budget_fraction": [.02, .04, .08][stage],
                 "purchased": oracle.spent, "budget_denominator": len(pool),

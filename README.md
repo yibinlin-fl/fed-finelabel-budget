@@ -165,3 +165,32 @@ bash scripts/run_p2_v100.sh --baseline B2 --resume results/p2_v100_seed101/B2/ch
 V100 配置是待执行的单组种子模板，脚本不会循环多种子。配置固定 20 轮/阶段、20 步/客户端、batch=64，没有测试集调参。每次单独输出目录以保留结果；种子变更应明确记入配置。正式比较前先在 V100 跑小规模 CUDA smoke。
 
 **预算分母补充：** 使用独立 5k 验证集后，完整联邦训练池为 45k，2%/4%/8% 对应 **900/1800/3600**；1000 样本 CPU Pilot 为 **20/40/80**。上文 P0 的 50k→1000/2000/4000 仅对应无 held-out 验证集的分母，不能混用。所有 P2 方法共享同一分母。
+
+## P2.5 学习能力诊断与单种子准备
+
+真实执行结果见 `reports/P2_5_REPORT.md`。诊断 Oracle 明确授权独立训练子集的全细标签；验证来自同一固定 5k held-out，官方测试集不读取。全细标签诊断不属于预算基线，权重标记 `diagnostic_full_fine`，P2 恢复入口拒绝加载。未标注样本训练和查询隔离协议不变。
+
+```powershell
+& ./.venv-p1/Scripts/python.exe -m fed_finelabel_budget.p25 --config configs/p25_cpu_diagnostic.yaml --only audit
+& ./.venv-p1/Scripts/python.exe -m fed_finelabel_budget.p25 --config configs/p25_cpu_diagnostic.yaml --only overfit
+& ./.venv-p1/Scripts/python.exe -m fed_finelabel_budget.p25 --config configs/p25_cpu_diagnostic.yaml --only central
+& ./.venv-p1/Scripts/python.exe -m fed_finelabel_budget.p25 --config configs/p25_cpu_diagnostic.yaml --only fedavg
+& ./.venv-p1/Scripts/python.exe -m fed_finelabel_budget.p25 --config configs/p25_cpu_diagnostic.yaml --only bn
+& ./.venv-p1/Scripts/python.exe -m fed_finelabel_budget.p25 --config configs/p25_cpu_stable_diagnostic.yaml --only central
+# GPU 诊断需要单独安装兼容 CUDA 的 PyTorch，再使用 p25_local_diagnostic.yaml。
+```
+
+CPU 配置仅允许 128 张过拟合、256 张中央监督、128 张双客户端诊断，分别最多 40 epochs / 10 epochs / 10 rounds。过拟合只根据已授权训练准确率 >=95% 提前结束；其余按固定轮数运行，无验证早停，无强增强。训练模块仅接收已授权 ClientDataset，不接收 Oracle 或离线 evaluator。
+
+原始 `sample_mean` 损失和 SGD momentum=0 仍是默认值。可配置 `loss.aggregation` 为 `sample_mean` 或 `group_mean`，以及非负 `fine_weight/coarse_weight`。前者是加权单样本损失总和除以 batch 样本数；后者是两个组各自均值的加权和，无隐式权重归一化，缺失组记零。`reduction=none` 始终返回未加权逐样本项供审计。本阶段只比较梯度，没有用 group_mean 替换已完成的基线。
+
+V100 上显式执行以下命令（本机未执行 GPU 实验）：
+
+```bash
+bash scripts/setup_p25_v100.sh
+bash scripts/run_p25_v100.sh
+# 断点恢复示例：激活相同环境后，只恢复指定方法
+python -m fed_finelabel_budget.p2 --config configs/p25_v100_b0_b1.yaml --baseline B0 --output results/p25_v100_B0 --resume results/p25_v100_B0/B0/checkpoint.pt
+```
+
+新 V100 模板只含 B0、B1，固定单组种子，公共 coarse Dirichlet alpha=.3，45k 训练 / 5k 验证，官方 test_samples=0。预算仍为900/1800/3600；每阶段30轮、每轮10客户端、每客户端50步、batch64；两种方法共同 SGD lr=.02 / momentum=.9（每轮重置），原始 sample_mean、两项权重1。lr=.02 来自本阶段独立全细标签诊断的早期数值稳定性控制，并已完整保留 lr=.05 的原始诊断；不是根据官方测试集选择。参数仍是待验证的预实验配置，与 P2 极短 CPU 配置有明确差异。B2–B4 和多种子没有启动。逐轮验证 CE、预测熵、直方图随日志保存；样本与 fine/coarse 使用数见 rounds.jsonl。BN 重校准只在独立反事实诊断中执行，未加入基线训练。

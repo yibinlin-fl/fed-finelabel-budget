@@ -36,3 +36,21 @@ class PublicPool:
         if not 0 <= i < len(self):
             raise IndexError("sample ID outside public pool")
         return PublicSample(i, int(self.__coarse[i]), self.__images[i].copy())
+
+
+class ClientPublicView:
+    """Controller materializes only this client's public samples, preserving IDs."""
+    __slots__ = ("__samples",)
+
+    def __init__(self, pool: PublicPool, ids):
+        self.__samples = {int(i): pool.sample(int(i)) for i in ids}
+
+    def sample(self, sample_id: int) -> PublicSample:
+        sample = self.__samples[int(sample_id)]  # other-client IDs raise KeyError
+        return PublicSample(sample.sample_id, sample.coarse_label, sample.image.copy())
+
+    def coarse_labels(self):
+        return {i: sample.coarse_label for i, sample in self.__samples.items()}
+
+    def __len__(self):
+        return len(self.__samples)

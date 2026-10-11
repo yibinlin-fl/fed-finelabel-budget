@@ -66,3 +66,55 @@ def inspect_dataset(root: str | Path, *, strict: bool = True) -> dict[str, int]:
         "coarse_groups": len(hierarchy.coarse_to_fine),
         "fine_classes": len(hierarchy.fine_to_coarse),
     }
+
+
+class SimulationData:
+    """TRUSTED CONTROLLER ONLY. Never pass this object to training/query code."""
+    def __init__(self, images, coarse, fine, hierarchy, validation, test, manifest):
+        self.pool = PublicPool(images, coarse)
+        self.hierarchy = hierarchy
+        self.validation = validation
+        self.test = test
+        self.manifest = manifest
+        self.__truth = dict(enumerate(map(int, fine)))
+
+    def new_oracle(self, maximum):
+        return FineLabelOracle(self.__truth, maximum)
+
+
+def prepare_experiment(root, *, split_seed, validation_size=5000, train_samples=None,
+                       validation_samples=None, test_samples=None, strict=True):
+    """ID-only split before partitioning; held-out truth only enters evaluator."""
+    from ..eval.offline import OfflineEvaluator
+    images, coarse, fine = _trusted_read(root, "train", strict)
+    hierarchy = Cifar100Hierarchy.from_label_pairs(fine, coarse)
+    if not 1 <= validation_size < len(images):
+        raise ValueError("invalid validation size")
+    order = np.random.default_rng(split_seed).permutation(len(images))
+    val_ids, train_ids = order[:validation_size], order[validation_size:]
+    if train_samples is not None:
+        if not 1 <= train_samples <= len(train_ids):
+            raise ValueError("invalid training subset size")
+        train_ids = train_ids[:train_samples]
+    if validation_samples is not None and not 1 <= validation_samples <= validation_size:
+        raise ValueError("invalid validation evaluation subset")
+    eval_ids = val_ids if validation_samples is None else val_ids[:validation_samples]
+    validation = OfflineEvaluator(images[eval_ids], fine[eval_ids], coarse[eval_ids])
+    test = None
+    if test_samples != 0:
+        ti, tc, tf = _trusted_read(root, "test", strict)
+        hierarchy.verify_pairs(tf, tc)
+        if test_samples is not None and not 1 <= test_samples <= len(ti):
+            raise ValueError("invalid test subset size")
+        # Test subsampling is ID-only, fixed before any model is trained.
+        test_ids = np.random.default_rng(split_seed + 1).permutation(len(ti))
+        if test_samples is not None:
+            test_ids = test_ids[:test_samples]
+        test = OfflineEvaluator(ti[test_ids], tf[test_ids], tc[test_ids])
+    else:
+        test_ids = np.array([], dtype=int)
+    manifest = {"train_original_ids": train_ids.tolist(), "validation_original_ids": val_ids.tolist(),
+                "validation_evaluated_ids": eval_ids.tolist(), "test_original_ids": test_ids.tolist(),
+                "budget_denominator": len(train_ids), "split_seed": split_seed}
+    return SimulationData(images[train_ids], coarse[train_ids], fine[train_ids], hierarchy,
+                          validation, test, manifest)

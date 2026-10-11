@@ -17,6 +17,7 @@ venv/
 /reports/*
 !/reports/.gitkeep
 !/reports/P1_REPORT.md
+!/reports/P2_REPORT.md
 *.pt
 *.pth
 *.ckpt

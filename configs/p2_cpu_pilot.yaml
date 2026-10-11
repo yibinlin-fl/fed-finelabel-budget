@@ -1,0 +1,37 @@
+project: fed-finelabel-budget
+device: cpu
+threads: 1
+baselines: [B0, B1, B2, B3, B4]
+seeds:
+  split: 20261011
+  partition: 101
+  init: 102
+  client_sampling: 103
+  query: 104
+  training: 105
+dataset:
+  root: data/cifar100
+  train_samples: 1000
+  validation_size: 5000
+  validation_samples: 100
+  test_samples: 100
+n_clients: 10
+partition:
+  type: dirichlet_coarse
+  alpha: 0.3
+  min_client_samples: 50
+  max_attempts: 1000
+budget:
+  initial_fraction: 0.02
+  additional_fractions: [0.02, 0.04]
+training:
+  rounds_per_stage: 1
+  clients_per_round: 10
+  local_epochs: 1
+  batch_size: 4
+  learning_rate: 0.01
+  max_steps: 1
+stage_model_policy: continue
+query_batch_size: 32
+evaluation_batch_size: 32
+output: results/p2_cpu_pilot

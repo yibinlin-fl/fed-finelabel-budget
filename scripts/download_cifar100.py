@@ -5,6 +5,7 @@ Run explicitly; P0 tests/preflight never download data.
 from __future__ import annotations
 import argparse
 import hashlib
+import os
 from pathlib import Path, PurePosixPath
 import shutil
 import tarfile
@@ -18,6 +19,19 @@ ACCEPTED_FILES = {
 }
 
 
+def download_archive(archive):
+    """Stage incomplete downloads separately; do not poison the final archive."""
+    temporary = archive.with_suffix(".download")
+    checksum = hashlib.md5()
+    with urllib.request.urlopen(URL, timeout=30) as response, temporary.open("wb") as output:
+        while block := response.read(1024 * 1024):
+            output.write(block)
+            checksum.update(block)
+    if checksum.hexdigest() != OFFICIAL_MD5:
+        raise RuntimeError("Official dataset MD5 mismatch; staged file retained for diagnosis")
+    os.replace(temporary, archive)
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--root", default="data/cifar100")
@@ -27,7 +41,7 @@ def main():
     archive = root / "cifar-100-python.tar.gz"
     if not archive.is_file():
         print(f"Downloading official CIFAR-100 into {archive} ...")
-        urllib.request.urlretrieve(URL, archive)
+        download_archive(archive)
     checksum = hashlib.md5()
     with archive.open("rb") as stream:
         for chunk in iter(lambda: stream.read(1024 * 1024), b""):

@@ -1,7 +1,7 @@
 # Fed Fine-Label Budget — 第二篇论文初始工程
 
-> **当前阶段 P1：基础训练闭环已实现。**
-> 包含数据协议、ResNet18、混合监督损失和串行 FedAvg；CPU 合成 smoke 仅验证工程，不构成 CIFAR-100 性能结果。B0–B4 与 P2 尚未实现。真实执行记录见 `reports/P1_REPORT.md`。
+> **当前阶段 P2：真实数据验证与 B0–B4 基线已实现。**
+> CPU Pilot 只验证训练与查询流程，不构成论文性能结论。执行证据见 `reports/P2_REPORT.md`；P1 历史证据仍见 `reports/P1_REPORT.md`。
 
 ## 课题
 
@@ -99,7 +99,7 @@ fed-finelabel-budget/
 |---|---|
 | P0-Setup：工程、层级读取、分区、Oracle、预算、单测、preflight | **已包含（本地经过测试）** |
 | P1：ResNet18、层级损失、FedAvg、数据集适配、CPU smoke train | **已实现，执行证据见 P1_REPORT** |
-| P2：B0–B4 公平对照策略与 V100 pilot | 未实现 |
+| P2：真实数据验证、B0–B4、独立评估、预算递增与恢复 | **已实现；V100 尚未执行** |
 | P3：方法可行性判断与创新机制 | 未开始 |
 
 注意：Python 层的隐藏标签不是强安全隔离；信任边界的具体描述见 `docs/DATA_CONTRACT.md`。
@@ -132,4 +132,36 @@ FedAvg 对所选客户端按完整本地训练集样本数加权，浮点参数�
 & ./.venv-p1/Scripts/python.exe scripts/run_p1_smoke.py --mode cifar100 --device cpu --output results/p1_cifar_smoke
 ```
 
-真实数据 smoke 由可信控制器从训练集按公共 ID 抽 150 样本，预算分母为该子集；层级由完整官方训练集配对推导，购买请求保留原始 ID，再映射为子集 ID。它不读取测试集，也不报告测试准确率。正式 50k 的 P2 预算仍是 1000 → 2000 → 4000，不能引用 smoke 子集预算作为正式实验。
+真实数据 smoke 由可信控制器从训练集按公共 ID 抽 150 样本，预算分母为该子集；层级由完整官方训练集配对推导，购买请求保留原始 ID，再映射为子集 ID。它不读取测试集，也不报告测试准确率。若联邦训练池是全部 50k，预算为 1000 → 2000 → 4000；当前 P2 独立留出验证集后的分母见下文，不能混用 smoke 子集预算。
+
+## P2 运行和恢复
+
+```powershell
+& ./.venv-p1/Scripts/python.exe scripts/download_cifar100.py --root data/cifar100
+& ./.venv-p1/Scripts/python.exe scripts/validate_p2_data.py
+& ./.venv-p1/Scripts/python.exe scripts/run_p1_smoke.py --mode cifar100 --output results/p1_real_smoke
+& ./.venv-p1/Scripts/python.exe scripts/run_pilot.py --config configs/p2_cpu_pilot.yaml
+# 只恢复指定基线；checkpoint 在每轮结束时原子保存
+& ./.venv-p1/Scripts/python.exe scripts/run_pilot.py --config configs/p2_cpu_pilot.yaml --baseline B2 --resume results/p2_cpu_pilot/B2/checkpoint.pt --output results/p2_resumed
+```
+
+CPU 默认 1000 个真实训练样本、10 客户端、coarse Dirichlet alpha=.3、单组种子、三个预算阶段各 1 轮、每客户端 1 步、batch=4。独立验证集从官方训练集按公共 ID 划 5000 张，Pilot 固定使用其中 100 张评估；测试集固定抽 100 张，仅每个基线最终 8% 阶段离线评估。CPU 入口拒绝完整数据/大训练预算，CUDA 配置不会静默回退到 CPU。
+
+初购集合完全共享，之后所有策略按各客户端公开剩余样本数分配相同规则的配额，具体 ID 留在客户端选择。B0/B1 配对随机；B2 coarse 组内条件熵；B3 基于已购样本公开 coarse 覆盖数进行水位填充并随机选组内样本；B4 先取熵 top-5k 候选，再对归一化本地 ResNet 特征做 farthest-first。B4 无 NxN 距离矩阵，特征不上传；均是简单基线，不声称新的协调机制。
+
+各阶段延续模型，无早停和学习率搜索。每轮固定 `max_steps`，每客户端用有放回采样生成 `batch_size * max_steps` 个样本，B0 仅从已购 fine 集采样，其余从完整公共本地池采样。所有方法聚合权重统一按本地公共样本数；若 B0 某客户端完全没有已购 fine，入口报错以防默默改变参与或计算预算，建议可行的 `min_client_samples>=50`。日志同时记录训练数据规模、重复使用计数、fine/coarse 监督样本使用数、时间与查询分配。
+
+`metrics.csv` 是逐轮**验证指标**，macro-F1 固定对 100 类平均，缺失类记 0。各 coarse 群的 fine accuracy、预测类别数/最大预测占比、最终 test 指标见基线 summary.json。每轮 checkpoint 含模型、已购快照、查询账本、轮次、配置与协议哈希；恢复重新构建同一分区/初购和 oracle，仅回放已购 ID。随机过程按绝对轮次/阶段重建，optimizer 每轮重置，可在轮边界一致恢复；不支持本地 batch 中途恢复。相同环境之外不保证位级一致。
+
+V100 使用兼容 CUDA 的 PyTorch/torchvision 后，由用户显式执行：
+
+```bash
+python -m pip install -e '.[dev,train]'
+bash scripts/run_p2_v100.sh
+# 或指定基线及已保存的轮边界 checkpoint
+bash scripts/run_p2_v100.sh --baseline B2 --resume results/p2_v100_seed101/B2/checkpoint.pt
+```
+
+V100 配置是待执行的单组种子模板，脚本不会循环多种子。配置固定 20 轮/阶段、20 步/客户端、batch=64，没有测试集调参。每次单独输出目录以保留结果；种子变更应明确记入配置。正式比较前先在 V100 跑小规模 CUDA smoke。
+
+**预算分母补充：** 使用独立 5k 验证集后，完整联邦训练池为 45k，2%/4%/8% 对应 **900/1800/3600**；1000 样本 CPU Pilot 为 **20/40/80**。上文 P0 的 50k→1000/2000/4000 仅对应无 held-out 验证集的分母，不能混用。所有 P2 方法共享同一分母。

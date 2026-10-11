@@ -2,7 +2,7 @@
 from copy import deepcopy
 import numpy as np
 import torch
-from torch.utils.data import DataLoader
+from torch.utils.data import DataLoader, RandomSampler
 from .seeds import seed_everything
 
 
@@ -22,7 +22,7 @@ def aggregate_states(states, counts):
 
 def train_fedavg(model, clients, criterion, *, rounds, clients_per_round, local_epochs,
                  batch_size, learning_rate, max_steps, sampling_seed, training_seed,
-                 device="cpu"):
+                 device="cpu", start_round=0, fixed_steps=False, aggregation_counts=None):
     if not clients or not 1 <= clients_per_round <= len(clients):
         raise ValueError("invalid participating client count")
     if min(rounds, local_epochs, batch_size, max_steps) < 1 or learning_rate <= 0:
@@ -32,8 +32,10 @@ def train_fedavg(model, clients, criterion, *, rounds, clients_per_round, local_
     model.to(device)
     criterion.to(device)
     rng = np.random.default_rng(sampling_seed)
+    for _ in range(start_round):
+        rng.choice(sorted(clients), clients_per_round, replace=False)
     history = []
-    for round_index in range(rounds):
+    for round_index in range(start_round, start_round + rounds):
         selected = sorted(map(int, rng.choice(sorted(clients), clients_per_round, replace=False)))
         states, counts, records = [], [], []
         for cid in selected:
@@ -41,8 +43,15 @@ def train_fedavg(model, clients, criterion, *, rounds, clients_per_round, local_
             seed_everything(seed)
             local = deepcopy(model).to(device).train()
             optimizer = torch.optim.SGD(local.parameters(), lr=learning_rate)
-            loader = DataLoader(clients[cid], batch_size=batch_size, shuffle=True,
-                                generator=torch.Generator().manual_seed(seed), num_workers=0)
+            generator = torch.Generator().manual_seed(seed)
+            if fixed_steps:
+                # Equal gradient/batch budgets including small fine-only datasets.
+                sampler = RandomSampler(clients[cid], replacement=True,
+                                        num_samples=batch_size * max_steps, generator=generator)
+                loader = DataLoader(clients[cid], batch_size=batch_size, sampler=sampler, num_workers=0)
+            else:
+                loader = DataLoader(clients[cid], batch_size=batch_size, shuffle=True,
+                                    generator=generator, num_workers=0)
             steps = examples = fine_examples = 0
             total_loss = 0.0
             for _ in range(local_epochs):
@@ -53,6 +62,8 @@ def train_fedavg(model, clients, criterion, *, rounds, clients_per_round, local_
                     if not torch.isfinite(loss):
                         raise RuntimeError("nonfinite local loss")
                     loss.backward()
+                    if any(p.grad is not None and not torch.isfinite(p.grad).all() for p in local.parameters()):
+                        raise RuntimeError("nonfinite gradient")
                     optimizer.step()
                     steps += 1
                     examples += len(images)
@@ -63,8 +74,8 @@ def train_fedavg(model, clients, criterion, *, rounds, clients_per_round, local_
                 if steps >= max_steps:
                     break
             states.append({k: v.detach().cpu().clone() for k, v in local.state_dict().items()})
-            counts.append(len(clients[cid]))
-            records.append({"client": cid, "dataset_samples": counts[-1], "steps": steps,
+            counts.append(len(clients[cid]) if aggregation_counts is None else aggregation_counts[cid])
+            records.append({"client": cid, "dataset_samples": len(clients[cid]), "steps": steps,
                             "examples_seen": examples, "fine_examples_seen": fine_examples,
                             "coarse_examples_seen": examples - fine_examples,
                             "mean_loss": total_loss / examples})

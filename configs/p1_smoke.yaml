@@ -1,0 +1,32 @@
+project: fed-finelabel-budget
+mode: synthetic
+device: cpu
+threads: 1
+seeds:
+  data: 20261011
+  partition: 101
+  init: 102
+  client_sampling: 103
+  query: 104
+  training: 105
+dataset:
+  samples: 150
+  root: data/cifar100
+  real_smoke_samples: 150
+n_clients: 3
+partition:
+  type: iid
+  alpha: 0.3
+  min_client_samples: 2
+  max_attempts: 1000
+budget:
+  initial_fraction: 0.02
+  additional_fractions: [0.02, 0.04]
+training:
+  rounds: 1
+  clients_per_round: 3
+  local_epochs: 1
+  batch_size: 50
+  learning_rate: 0.01
+  max_steps: 1
+output: results/p1_smoke

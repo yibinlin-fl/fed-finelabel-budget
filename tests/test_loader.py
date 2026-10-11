@@ -37,3 +37,26 @@ def test_data_check_reports_sizes(fake_cifar_files):
 def test_strict_mode_rejects_tiny_fake_data(fake_cifar_files):
     with pytest.raises(ValueError, match="expected 50000"):
         bootstrap_train(fake_cifar_files, 20, strict=True)
+
+
+def test_p1_real_data_controller_subset_ids(fake_cifar_files, tmp_path, monkeypatch):
+    """Exercise the official-format adapter on a fixture, NOT real CIFAR accuracy."""
+    import json
+    from pathlib import Path
+    import yaml
+    from fed_finelabel_budget import p1
+
+    monkeypatch.setattr(p1, "bootstrap_train", lambda root, budget: bootstrap_train(root, budget, strict=False))
+    cfg = yaml.safe_load((Path(__file__).parents[1] / "configs/p1_smoke.yaml").read_text(encoding="utf-8"))
+    cfg["mode"] = "cifar100"
+    cfg["dataset"]["root"] = str(fake_cifar_files)
+    cfg["dataset"]["real_smoke_samples"] = 100
+    cfg["output"] = str(tmp_path / "fixture-smoke")
+    summary = p1.run_smoke(cfg)
+    assert summary["fine_queries_spent"] == summary["fine_labels_available"] == 2
+    assert summary["budget_targets"] == [2, 4, 8]
+    assert sum(c["fine_examples_seen"] for c in summary["history"][0]["clients"]) == 2
+    assert sum(c["examples_seen"] for c in summary["history"][0]["clients"]) == 100
+    assert summary["changed_parameter_tensors"] > 0 and summary["checkpoint_verified"]
+    assert summary["test_or_validation_read"] is False
+    assert json.loads((Path(cfg["output"]) / "run.json").read_text())["status"] == "PASS"

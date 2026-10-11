@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "fed-finelabel-budget"
 version = "0.1.0"
-description = "Reproducible P0 scaffold for budgeted federated fine-label acquisition"
+description = "Reproducible budgeted fine-label protocol and basic federated training"
 readme = "README.md"
 requires-python = ">=3.10"
 authors = [{name = "Research project"}]

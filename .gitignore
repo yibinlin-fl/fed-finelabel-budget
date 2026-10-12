@@ -21,6 +21,7 @@ venv/
 !/reports/P2_REPORT.md
 !/reports/P2_5_REPORT.md
 !/reports/P2_5_CURVES.png
+!/reports/P2_6_REPORT.md
 *.pt
 *.pth
 *.ckpt

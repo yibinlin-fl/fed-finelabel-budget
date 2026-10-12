@@ -1,0 +1,43 @@
+# P2.6 staged V100: one explicit method and bounded round segment per invocation.
+project: fed-finelabel-budget
+device: cuda
+threads: 2
+seeds:
+  split: 20261011
+  partition: 101
+  init: 102
+  client_sampling: 103
+  query: 104
+  training: 105
+dataset:
+  root: data/cifar100
+  train_samples: null
+  validation_size: 5000
+  validation_samples: null
+  test_samples: 0
+n_clients: 10
+partition:
+  type: dirichlet_coarse
+  alpha: 0.3
+  min_client_samples: 500
+  max_attempts: 1000
+budget:
+  initial_fraction: 0.02
+  additional_fractions:
+  - 0.02
+  - 0.04
+training:
+  rounds_per_stage: 30
+  clients_per_round: 10
+  local_epochs: 1
+  batch_size: 64
+  learning_rate: 0.02
+  momentum: 0.9
+  max_steps: 50
+stage_model_policy: continue
+query_batch_size: 64
+evaluation_batch_size: 64
+output: results/p26_sample_mean
+loss_protocol: sample_mean
+loss_weights: {fine: 1.0, coarse: 1.0}
+protocol_role: original_and_paired_control

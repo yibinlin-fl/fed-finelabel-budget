@@ -1,6 +1,7 @@
 # Fed Fine-Label Budget — 第二篇论文初始工程
 
 > **当前阶段 P2：真实数据验证与 B0–B4 基线已实现。**
+> P2.6 增加公平性审计、paired-stream 控制和 V100 分阶段入口；真实 GPU baseline 尚未执行。见 `reports/P2_6_REPORT.md`。
 > CPU Pilot 只验证训练与查询流程，不构成论文性能结论。执行证据见 `reports/P2_REPORT.md`；P1 历史证据仍见 `reports/P1_REPORT.md`。
 
 ## 课题
@@ -194,3 +195,63 @@ python -m fed_finelabel_budget.p2 --config configs/p25_v100_b0_b1.yaml --baselin
 ```
 
 新 V100 模板只含 B0、B1，固定单组种子，公共 coarse Dirichlet alpha=.3，45k 训练 / 5k 验证，官方 test_samples=0。预算仍为900/1800/3600；每阶段30轮、每轮10客户端、每客户端50步、batch64；两种方法共同 SGD lr=.02 / momentum=.9（每轮重置），原始 sample_mean、两项权重1。lr=.02 来自本阶段独立全细标签诊断的早期数值稳定性控制，并已完整保留 lr=.05 的原始诊断；不是根据官方测试集选择。参数仍是待验证的预实验配置，与 P2 极短 CPU 配置有明确差异。B2–B4 和多种子没有启动。逐轮验证 CE、预测熵、直方图随日志保存；样本与 fine/coarse 使用数见 rounds.jsonl。BN 重校准只在独立反事实诊断中执行，未加入基线训练。
+
+## P2.6：公平性控制与分阶段 V100 运行
+
+原 `p25_v100_b0_b1.yaml` 保持不变。B0 原始仅已购池、B1 原始完整池，二者共享预算和计算步数，但 fine 暴露次数不相同；新增 `PS_FINE/PS_COARSE` 是独立 paired-stream 工程控制，不能替代预算策略排名。
+
+paired 两组都从完整本地公共池采样，绝对轮次/客户端 seed 和已购集合相同。所有图像前向进入 train-mode BN；PS_FINE 只对已购样本提供 fine CE，未知样本损失为零；PS_COARSE 增加这些未知样本的 coarse marginal。两组 fine 项的分母相同（sample_mean 为完整batch的N）。没有监督项的batch不执行backward/optimizer.step，但仍更新BN；有监督时保持通常SGD，包括零梯度时的动量行为。BN规则相同，缓冲值不会因模型不同而保证相同。fine样本可通过BN耦合依赖同batch的未知图像，这也是明确采用同一前向规则的原因。
+
+每轮记录输入序列与fine暴露哈希、fine/coarse损失分量/均值、监督数量、backward次数、optimizer.step次数、非零梯度次数、实际参数更新次数、重复采样、BN统计、完整5k验证指标/CE/entropy/histogram、时间、显存峰值、lr/种子/配置/commit。CPU仅执行单元测试和真实数据ID采样审计，不运行P2.6性能训练。
+
+Linux / V100，从项目根目录执行：
+
+```bash
+# 首次准备兼容环境；已有相同环境可直接激活
+bash scripts/setup_p25_v100.sh
+# 数据官方校验 + pytest + 真实CUDA梯度/checkpoint预检，证书写入P2.6目录
+bash scripts/run_p26_v100.sh preflight B0
+# 每条命令只启动一种方法的2%前5轮
+bash scripts/run_p26_v100.sh start2 B0
+bash scripts/run_p26_v100.sh start2 B1
+# 阅读各方法health.json和rounds.jsonl后，继续2%至第30轮；代码再次强制健康门槛
+bash scripts/run_p26_v100.sh finish2 B0
+bash scripts/run_p26_v100.sh finish2 B1
+```
+
+以下是后续可显式执行的单段命令，不会自动串联：
+
+```bash
+# 同一模型和预算恢复，4%前5轮（全局31–35），然后至60
+bash scripts/run_p26_v100.sh start4 B0
+bash scripts/run_p26_v100.sh finish4 B0
+# 8%前5轮（61–65），然后至90
+bash scripts/run_p26_v100.sh start8 B0
+bash scripts/run_p26_v100.sh finish8 B0
+# B1单独以相同阶段运行；没有任何多种子/全方法循环
+```
+
+paired 控制独立目录，先运行两组的同一前缀：
+
+```bash
+bash scripts/run_p26_v100.sh start2 PS_FINE
+bash scripts/run_p26_v100.sh start2 PS_COARSE
+source .venv-p25/bin/activate
+python scripts/verify_p26_pair.py --root results/p26_sample_mean
+# paired的后续每段会强制核对两组此前相同前缀（输入/fine暴露/购买/初始化/BN规则）
+bash scripts/run_p26_v100.sh finish2 PS_FINE
+bash scripts/run_p26_v100.sh finish2 PS_COARSE
+```
+
+入口仅接受恢复链 `5→30→35→60→65→90`；首次不能直接90轮，已有非空目录不能重新初始化。`checkpoint.pt`每轮原子替换，每次段末保留`checkpoint-round005.pt`等快照及独立invocation元数据。修改配置/源码/Torch版本/初始集合会拒绝恢复；预算和查询账本严格校验。Linux脚本使用`flock`限制同一方法并发写目录，需要Linux的util-linux工具。
+
+健康门槛不按Accuracy挑选checkpoint：检查有限损失/梯度、5k验证/直方图数量、预算和步数核对、BN非负有限、极端CE>100。低Accuracy、预测集中、极端BN统计作为警告保留；不根据官方测试集或方法分别选择权重。
+
+`configs/p26_v100_group_mean_diagnostic.yaml`是明确分开的诊断配置，两项权重仍固定为1；先对该配置重新preflight，再通过脚本第三参数显式指定，例如：
+
+```bash
+bash scripts/run_p26_v100.sh preflight PS_FINE configs/p26_v100_group_mean_diagnostic.yaml
+bash scripts/run_p26_v100.sh start2 PS_FINE configs/p26_v100_group_mean_diagnostic.yaml
+```
+
+它写入`results/p26_group_mean_diagnostic`，不能混合为sample_mean同一公平比较。当前均为待执行命令，本机没有V100运行结果。

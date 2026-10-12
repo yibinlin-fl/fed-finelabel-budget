@@ -1,5 +1,6 @@
 """V100 launch gate: real-data gradients; diagnostic weights discarded."""
 import io
+import argparse
 import json
 from pathlib import Path
 import torch
@@ -10,6 +11,9 @@ from fed_finelabel_budget.models.resnet_cifar import resnet18_cifar
 
 
 def main():
+    parser=argparse.ArgumentParser()
+    parser.add_argument("--output",default="results/p25_cuda_preflight.json")
+    args=parser.parse_args()
     assert torch.cuda.is_available(), "CUDA preflight requires an available GPU"
     seed_everything(102)
     cfg = {"dataset_root":"data/cifar100", "split_seed":20261011,"validation_samples":32}
@@ -37,8 +41,8 @@ def main():
     assert all(torch.equal(v,restored[k]) for k,v in model.state_dict().items())
     result={"purpose":"diagnostic_full_fine","authorized_training_samples":16,"official_test_read":False,
             "gpu":torch.cuda.get_device_name(0),"torch":str(torch.__version__),"losses":records,"checkpoint_exact":True}
-    Path("results").mkdir(exist_ok=True)
-    Path("results/p25_cuda_preflight.json").write_text(json.dumps(result,indent=2),encoding="utf-8")
+    Path(args.output).parent.mkdir(parents=True,exist_ok=True)
+    Path(args.output).write_text(json.dumps(result,indent=2),encoding="utf-8")
     print(json.dumps(result))
 
 
